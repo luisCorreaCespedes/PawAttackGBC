@@ -3,7 +3,9 @@
 
 #include <gb/gb.h>
 
-void Start_TopDown();
-void Update_TopDown();
+void topdown_init() BANKED;
+void topdown_update() BANKED;
+
+extern UBYTE topdown_grid;
 
 #endif

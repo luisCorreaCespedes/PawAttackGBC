@@ -3,163 +3,106 @@
 
 #include <gb/gb.h>
 
-#define UI_BANK 1
+#include "gbs_types.h"
+#include "bankdata.h"
+
+#define MENU_CANCEL_LAST 1
+#define MENU_CANCEL_B 2
+
+#define TEXT_BUFFER_START 0xCCu
+#define TEXT_BUFFER_START_BANK1 0xC0u
+#define TEXT_BUFFER_LEN ((UBYTE)(0x100 - TEXT_BUFFER_START))
+#define TEXT_BKG_FILL_W 0x00u
+#define TEXT_BKG_FILL_B 0xffu
+#define TEXT_MAX_LENGTH 255
+
+#define UI_PALETTE 7
+
 #define MENU_OPEN_Y 112
 #define WIN_LEFT_X 7
 #define MENU_CLOSED_Y (MAXWNDPOSY + 1U)
-#define TEXT_BUFFER_START 0xCCU
 #define MENU_LAYOUT_INITIAL_X 88
 #define MENU_CANCEL_ON_LAST_OPTION 0x01U
 #define MENU_CANCEL_ON_B_PRESSED 0x02U
 
-extern UBYTE ui_block;
-extern unsigned char text_lines[80];
-extern unsigned char tmp_text_lines[80];
-extern UBYTE win_pos_x;
-extern UBYTE win_pos_y;
-extern UBYTE win_dest_pos_x;
-extern UBYTE win_dest_pos_y;
+#define ui_bkg_tile   0x07u
+#define ui_while_tile 0xC9u
+#define ui_black_tile 0xCAu
+
+#define ui_cursor_tile 0xCBu
+#define ui_bg_tile 0xC4u
+
+extern UBYTE win_pos_x, win_dest_pos_x;
+extern UBYTE win_pos_y, win_dest_pos_y;
 extern UBYTE win_speed;
+
+extern UBYTE text_drawn;
+extern UBYTE text_wait;
+
 extern UBYTE text_in_speed;
 extern UBYTE text_out_speed;
 extern UBYTE text_draw_speed;
 extern UBYTE text_ff_joypad;
-extern UBYTE tmp_text_in_speed;
-extern UBYTE tmp_text_out_speed;
-extern UBYTE menu_layout;
-extern UBYTE text_num_lines;
-extern UBYTE text_x;
-extern UBYTE text_y;
-extern UBYTE text_drawn;
-extern UBYTE text_count;
-extern UBYTE text_tile_count;
-extern UBYTE text_wait;
-extern UBYTE avatar_enabled;
-extern UBYTE menu_enabled;
-extern UBYTE menu_cancel_on_last_option;
-extern BYTE menu_index;
-extern UBYTE menu_num_options;
-extern UWORD menu_flag;
-extern UBYTE menu_cancel_on_b;
+extern UBYTE text_ff;
+extern UBYTE text_bkg_fill;
 
-/**
- * Initialise UI
- */
-void UIInit();
+extern unsigned char ui_text_data[TEXT_MAX_LENGTH];
 
-/**
- * Update UI
- */
-void UIUpdate();
+#define UI_PRINT_LEFTTORIGHT 0
+#define UI_PRINT_RIGHTTOLEFT 1
 
-/**
- * Same as UIUpdate() but requires manually switching to bank 1 first
- */
-void UIUpdate_b() __banked;
+extern UBYTE vwf_direction;
+extern font_desc_t vwf_current_font_desc;
+extern UBYTE vwf_current_font_bank;
+extern UBYTE vwf_tile_data[16 * 2];
 
-/**
- * Handle joypad input for UI
- */
-void UIOnInteract();
+extern UBYTE * text_render_base_addr;
 
-/**
- * Same as UIOnInteract() but requires manually switching to bank 1 first
- */
-void UIOnInteract_b() __banked;
+extern UBYTE * text_scroll_addr;
+extern UBYTE text_scroll_width, text_scroll_height;
+extern UBYTE text_scroll_fill;
 
-/**
- * Reset UI ready for new scene start
- */
-void UIReset();
+extern const UBYTE ui_time_masks[];
 
-/**
- * Set position of UI layer
- * 
- * @param x X position
- * @param y Y position
- */
-void UISetPos(UBYTE x, UBYTE y);
+void ui_init() BANKED;
+void ui_update() NONBANKED;  // critical path, NONBANKED for speed
 
-/**
- * Animate position of UI layer towards new destination
- * 
- * @param x Destination X position
- * @param y Destination Y position
- * @param speed UI movement speed
- */
-void UIMoveTo(UBYTE x, UBYTE y, UBYTE speed);
+void ui_load_tiles() BANKED; 
 
-/**
- * Draw a frame at position {x,y} with the specified width and height
- * 
- * @param x X position
- * @param y Y position
- * @param width Frame width
- * @param height Frame height 
- */
-void UIDrawFrame(UBYTE x, UBYTE y, UBYTE width, UBYTE height);
+#define UI_WAIT_WINDOW  1
+#define UI_WAIT_TEXT    2
+#define UI_WAIT_BTN_A   4
+#define UI_WAIT_BTN_B   8
+#define UI_WAIT_BTN_ANY 16
 
-/**
- * Draw a dialogue frame at position {0,0} with enough room for specified lines of text
- * 
- * @param h Number of lines of text to allow within frame
- */
-void UIDrawDialogueFrame(UBYTE h);
+#define UI_DRAW_FRAME   1
+#define UI_AUTOSCROLL   2
 
-/**
- * Set UI Overlay to a solid color
- * 
- * @param color 0 for black, 1 for white
- */
-void UISetColor(UBYTE color);
+#define UI_IN_SPEED      -1
+#define UI_OUT_SPEED     -2
+#define UI_SPEED_INSTANT -3
 
-/**
- * Draw avatar in dialogue box
- * 
- * @param avatar_index avatar index in data_ptrs.h
- */
-void UIShowAvatar(UBYTE avatar_index);
+void ui_run_modal(UBYTE wait_flags) BANKED;  // process UI until closed
 
-/**
- * Set text in dialogue box
- * 
- * @param bank bank location of string
- * @param bank_offset memory offset of string within bank
- */
-void UIShowText(UBYTE bank, UWORD bank_offset);
+inline void ui_set_pos(UBYTE x, UBYTE y) {
+    win_pos_y = win_dest_pos_y = y;
+    win_pos_x = win_dest_pos_x = x;
+}
 
-/**
- * Set multiple choice text in dialogue box
- * 
- * @param flag_index index of script_variable to store selected choice
- * @param bank bank location of string
- * @param bank_offset memory offset of string within bank
- */
-void UIShowChoice(UWORD flag_index, UBYTE bank, UWORD bank_offset);
+inline void ui_move_to(UBYTE x, UBYTE y, BYTE speed) {
+    win_dest_pos_y = y;
+    win_dest_pos_x = x;
+    if (speed == UI_SPEED_INSTANT) win_pos_y = y, win_pos_x = x; else win_speed = speed;
+}
 
-/**
- * Set menu text in dialogue box
- * 
- * @param flag_index index of script_variable to store selected choice
- * @param bank bank location of string
- * @param bank_offset memory offset of string within bank
- * @param layout if TRUE set menu to single column on right of screen
- * @param cancel_config bit flag for cancel handling configuration
- */
-void UIShowMenu(UWORD flag_index, UBYTE bank, UWORD bank_offset, UBYTE layout, UBYTE cancel_config);
+UBYTE ui_run_menu(menu_item_t * start_item, UBYTE bank, UBYTE options, UBYTE count) BANKED;
 
-/**
- * Check if UI is currently closed
- * 
- * @return TRUE if UI is closed
- */
-UBYTE UIIsClosed();
+inline void ui_load_frame_tiles(const UBYTE * offset, UBYTE bank) {
+    SetBankedBkgData(192, 9, offset, bank);
+}
 
-/**
- * Check if UI is at current destination
- * 
- * @return TRUE if UI is at destination
- */
-UBYTE UIAtDest();
+inline void ui_load_cursor_tile(const UBYTE * offset, UBYTE bank) {
+    SetBankedBkgData(ui_cursor_tile, 1, offset, bank);
+}
 
 #endif

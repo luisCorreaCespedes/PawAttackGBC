@@ -1,6 +1,45 @@
 {
-  "version": "2.0.0-e18",
+  "version": "3.0.2-e2",
   "fields": [
+    {
+      "key": "INPUT_PLATFORM_JUMP",
+      "label": "FIELD_INPUT_JUMP",
+      "group": "GAMETYPE_PLATFORMER",
+      "type": "select",
+      "options": [
+        ["INPUT_A", "A"],
+        ["INPUT_B", "B"],
+        ["INPUT_UP", "FIELD_DIRECTION_UP"]
+      ],
+      "cType": "define",
+      "defaultValue": "INPUT_A"
+    },
+    {
+      "key": "INPUT_PLATFORM_RUN",
+      "label": "FIELD_INPUT_RUN",
+      "group": "GAMETYPE_PLATFORMER",
+      "type": "select",
+      "options": [
+        ["INPUT_A", "A"],
+        ["INPUT_B", "B"]
+      ],
+      "cType": "define",
+      "defaultValue": "INPUT_B"
+    }, 
+    {
+      "key": "INPUT_PLATFORM_INTERACT",
+      "label": "FIELD_INPUT_INTERACT",
+      "group": "GAMETYPE_PLATFORMER",
+      "type": "select",
+      "options": [
+        ["INPUT_A", "A"],
+        ["INPUT_B", "B"],
+        ["INPUT_UP", "FIELD_DIRECTION_UP"],
+        ["INPUT_DOWN", "FIELD_DIRECTION_DOWN"]        
+      ],
+      "cType": "define",
+      "defaultValue": "INPUT_A"
+    },        
     {
       "key": "plat_min_vel",
       "label": "FIELD_MIN_VEL",
@@ -31,6 +70,16 @@
       "min": 0,
       "max": 16384
     },
+    {
+      "key": "plat_climb_vel",
+      "label": "FIELD_CLIMB_VEL",
+      "group": "GAMETYPE_PLATFORMER",
+      "type": "slider",
+      "cType": "WORD",
+      "defaultValue": 4000,
+      "min": 0,
+      "max": 16384
+    },    
     {
       "key": "plat_walk_acc",
       "label": "FIELD_WALK_ACC",
@@ -101,6 +150,28 @@
       "min": 0,
       "max": 24560
     },
+    {
+      "key": "shooter_scroll_speed",
+      "label": "FIELD_SCROLL_SPEED",
+      "group": "GAMETYPE_SHMUP",
+      "type": "slider",
+      "cType": "UBYTE",
+      "defaultValue": 16,
+      "min": 0,
+      "max": 64
+    },
+    {
+      "key": "INPUT_TOPDOWN_INTERACT",
+      "label": "FIELD_INPUT_INTERACT",
+      "group": "GAMETYPE_TOP_DOWN",
+      "type": "select",
+      "options": [
+        ["INPUT_A", "A"],
+        ["INPUT_B", "B"]
+      ],
+      "cType": "define",
+      "defaultValue": "INPUT_A"
+    },    
     {
       "key": "topdown_grid",
       "label": "FIELD_GRID_SIZE",

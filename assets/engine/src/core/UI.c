@@ -1,172 +1,539 @@
-#include "UI.h"
+#pragma bank 1
 
-#include <stdio.h>
 #include <string.h>
 
-#include "BankData.h"
-#include "BankManager.h"
-#include "GameTime.h"
-#include "Input.h"
-#include "Math.h"
-#include "data_ptrs.h"
+#include "system.h"
+#include "ui.h"
+#include "game_time.h"
+#include "data/data_bootstrap.h"
+#include "data/frame_image.h"
+#include "data/cursor_image.h"
+#include "bankdata.h"
+#include "camera.h"
+#include "scroll.h"
+#include "input.h"
+#include "math.h"
+#include "actor.h"
+#include "projectiles.h"
+#include "shadow.h"
 
-void UIInit_b() __banked;
-void UIUpdate_b() __banked;
-void UIReset_b() __banked;
-void UIDrawFrame_b(UBYTE x, UBYTE y, UBYTE width, UBYTE height) __banked;
-void UIDrawDialogueFrame_b(UBYTE h) __banked;
-void UISetColor_b(UWORD image_index) __banked;
-void UIShowText_b() __banked;
-void UIOnInteract_b() __banked;
-void UIShowMenu_b(UWORD flag_index,
-                  UBYTE bank,
-                  UWORD bank_offset,
-                  UBYTE layout,
-                  UBYTE cancel_config) __banked;
+#define ui_frame_tl_tiles 0xC0u
+#define ui_frame_bl_tiles 0xC6u
+#define ui_frame_tr_tiles 0xC2u
+#define ui_frame_br_tiles 0xC8u
+#define ui_frame_t_tiles  0xC1u
+#define ui_frame_b_tiles  0xC7u
+#define ui_frame_l_tiles  0xC3u
+#define ui_frame_r_tiles  0xC5u
+#define ui_frame_bg_tiles 0xC4u
 
-UBYTE ui_block = FALSE;
-UBYTE win_pos_x;
-UBYTE win_pos_y;
-UBYTE win_dest_pos_x;
-UBYTE win_dest_pos_y;
+UBYTE win_pos_x, win_dest_pos_x;
+UBYTE win_pos_y, win_dest_pos_y;
 UBYTE win_speed;
 
-UBYTE text_x;
-UBYTE text_y;
 UBYTE text_drawn;
-UBYTE text_count = 0;
-UBYTE text_tile_count;
-UBYTE text_wait = 0;
-UBYTE text_in_speed = 1;
-UBYTE text_out_speed = 1;
-UBYTE text_draw_speed = 1;
-UBYTE text_ff_joypad = J_A | J_B;
-UBYTE tmp_text_in_speed = 1;
-UBYTE tmp_text_out_speed = 1;
-UBYTE text_num_lines = 0;
+UBYTE current_text_speed;
+UBYTE text_wait;
 
-UBYTE avatar_enabled = 0;
-UBYTE menu_enabled = FALSE;
-BYTE menu_index = 0;
-UWORD menu_flag;
-UBYTE menu_num_options = 2;
-UBYTE menu_cancel_on_last_option = TRUE;
-UBYTE menu_cancel_on_b = TRUE;
-UBYTE menu_layout = FALSE;
+UBYTE text_in_speed;
+UBYTE text_out_speed;
+UBYTE text_draw_speed;
+UBYTE text_ff_joypad;
+UBYTE text_ff; 
+UBYTE text_bkg_fill;
 
-unsigned char text_lines[80] = "";
-unsigned char tmp_text_lines[80] = "";
+unsigned char ui_text_data[TEXT_MAX_LENGTH];
 
-void UIInit() {
-  ui_block = FALSE;
-  text_drawn = TRUE;
-  UIInit_b();
+// char printer internals
+static UBYTE * ui_text_ptr;
+static UBYTE * ui_dest_ptr;
+static UBYTE * ui_dest_base;
+static UBYTE ui_current_tile;
+static UBYTE ui_current_tile_bank;
+static UBYTE ui_prev_tile;
+static UBYTE ui_prev_tile_bank;
+static UBYTE vwf_current_offset;
+//UBYTE vwf_tile_data[16 * 2]; // moved into absolute.c to free 64 bytes of WRAM (move after shadow_OAM[] which is 256-boundary aligned)
+UBYTE vwf_current_mask;
+UBYTE vwf_current_rotate;
+UBYTE vwf_inverse_map;
+UBYTE vwf_direction;
+
+font_desc_t vwf_current_font_desc;
+UBYTE vwf_current_font_bank;
+UBYTE vwf_current_font_idx;
+
+UBYTE * text_render_base_addr;
+
+UBYTE * text_scroll_addr;
+UBYTE text_scroll_width, text_scroll_height;
+UBYTE text_scroll_fill;
+
+void ui_init() BANKED {
+    vwf_direction               = UI_PRINT_LEFTTORIGHT;
+    vwf_current_font_idx        = 0;
+    vwf_current_font_bank       = ui_fonts[0].bank;
+    MemcpyBanked(&vwf_current_font_desc, ui_fonts[0].ptr, sizeof(font_desc_t), vwf_current_font_bank);
+
+    text_in_speed               = 0;
+    text_out_speed              = 0;
+    text_ff_joypad              = 1;
+    text_bkg_fill               = TEXT_BKG_FILL_W;
+
+    ui_text_ptr                 = 0;
+    ui_dest_ptr                 = 0;
+    ui_dest_base                = 0;
+
+    vwf_current_offset          = 0;
+
+    ui_current_tile             = TEXT_BUFFER_START;
+    ui_current_tile_bank        = 0;
+    ui_prev_tile                = TEXT_BUFFER_START;
+    ui_prev_tile_bank           = 0;
+
+    ui_set_pos(0, MENU_CLOSED_Y);
+
+    win_speed                   = 1;
+    text_drawn                  = TRUE;
+    text_draw_speed             = 1;
+    current_text_speed          = 0;
+
+    text_render_base_addr       = GetWinAddr();
+
+    text_scroll_addr            = GetWinAddr();
+    text_scroll_width           = 20; 
+    text_scroll_height          = 8;
+    text_scroll_fill            = ui_while_tile;
+
+    ui_load_tiles();
 }
 
-void UIUpdate() {
-  UIUpdate_b();
+void ui_load_tiles() BANKED {
+    ui_load_frame_tiles(frame_image, BANK(frame_image));
+    ui_load_cursor_tile(cursor_image, BANK(cursor_image));
+
+    memset(vwf_tile_data, TEXT_BKG_FILL_W, 16);
+    set_bkg_data(ui_while_tile, 1, vwf_tile_data);
+    memset(vwf_tile_data, TEXT_BKG_FILL_B, 16);
+    set_bkg_data(ui_black_tile, 1, vwf_tile_data);
 }
 
-void UIReset() {
-  UIReset_b();
-}
+void ui_draw_frame_row(void * dest, UBYTE tile, UBYTE width) OLDCALL;
 
-void UIDrawFrame(UBYTE x, UBYTE y, UBYTE width, UBYTE height) {
-  UIDrawFrame_b(x, y, width, height);
-}
-
-void UIDrawDialogueFrame(UBYTE h) {
-  UIDrawDialogueFrame_b(h);
-}
-
-void UIShowText(UBYTE bank, UWORD bank_offset) {
-  UBYTE* ptr;
-
-  strcpy(tmp_text_lines, "");
-
-  ptr = (BankDataPtr(bank)) + bank_offset;
-
-  PUSH_BANK(bank);
-  strcat(tmp_text_lines, ptr);
-  POP_BANK;
-
-  UIShowText_b();
-}
-
-void UIShowAvatar(UBYTE avatar_index) {
-  BankPtr avatar_bank_ptr;
-  UBYTE* avatar_ptr;
-  UBYTE avatar_len;
-  UBYTE tile1, tile2, tile3, tile4;
-
-  unsigned char* tmp_avatar_ptr[100];
-
-  ReadBankedBankPtr(DATA_PTRS_BANK, &avatar_bank_ptr, &avatar_bank_ptrs[avatar_index]);
-  avatar_ptr = (BankDataPtr(avatar_bank_ptr.bank)) + avatar_bank_ptr.offset;
-  avatar_len = MUL_4(ReadBankedUBYTE(avatar_bank_ptr.bank, avatar_ptr));
-
-  PUSH_BANK(avatar_bank_ptr.bank);
-  memcpy(tmp_avatar_ptr, avatar_ptr + 1, avatar_len * 16);
-  POP_BANK
-  SetBankedBkgData(TEXT_BUFFER_START, avatar_len, (unsigned char *)tmp_avatar_ptr, FONT_BANK);
-
-  tile1 = TEXT_BUFFER_START;
-  tile2 = TEXT_BUFFER_START + 1U;
-  tile3 = TEXT_BUFFER_START + 2U;
-  tile4 = TEXT_BUFFER_START + 3U;
-
-  set_win_tiles(1, 1, 1, 1, &tile1);
-  set_win_tiles(2, 1, 1, 1, &tile2);
-  set_win_tiles(1, 2, 1, 1, &tile3);
-  set_win_tiles(2, 2, 1, 1, &tile4);
-}
-
-void UIShowChoice(UWORD flag_index, UBYTE bank, UWORD bank_offset) {
-  UIShowMenu_b(flag_index, bank, bank_offset, 0,
-               /*MENU_CANCEL_ON_B_PRESSED | */MENU_CANCEL_ON_LAST_OPTION);
-}
-
-void UIShowMenu(UWORD flag_index,
-                UBYTE bank,
-                UWORD bank_offset,
-                UBYTE layout,
-                UBYTE cancel_config) {
-  UIShowMenu_b(flag_index, bank, bank_offset, layout, cancel_config);
-}
-
-void UISetPos(UBYTE x, UBYTE y) {
-  win_pos_x = x;
-  win_dest_pos_x = x;
-  win_pos_y = y;
-  win_dest_pos_y = y;
-}
-
-void UIMoveTo(UBYTE x, UBYTE y, UBYTE speed) {
-  win_dest_pos_x = x;
-  win_dest_pos_y = y;
-  if (speed == 0) {
-    win_pos_x = x;
-    win_pos_y = y;
-    if (y == MENU_CLOSED_Y) {
-      win_speed = 0xFF;
+void ui_draw_frame(UBYTE x, UBYTE y, UBYTE width, UBYTE height) BANKED {
+    if (height == 0) return;
+#ifdef CGB
+    if (_is_CGB) {
+        VBK_REG = 1;
+        fill_win_rect(x, y, width, height, (UI_PALETTE & 0x07u));        
+        VBK_REG = 0;
     }
-  } else {
-    win_speed = speed;
-  }
+#endif
+    UBYTE * base_addr = GetWinAddr() + (y << 5) + x;
+    ui_draw_frame_row(base_addr, ui_frame_tl_tiles, width);
+    if (--height == 0) return;
+    if (height > 1)
+        for (UBYTE i = height - 1; i != 0; i--) {
+            base_addr += 32;
+            ui_draw_frame_row(base_addr, ui_frame_l_tiles, width);
+        }
+    base_addr += 32;
+    ui_draw_frame_row(base_addr, ui_frame_bl_tiles, width);
 }
 
-UBYTE UIIsClosed() {
-  return win_pos_y == MENU_CLOSED_Y && win_dest_pos_y == MENU_CLOSED_Y;
+inline void ui_load_tile(const UBYTE * tiledata, UBYTE bank) {
+#ifdef CGB
+    VBK_REG = ui_current_tile_bank;
+#endif
+    SetBankedBkgData(ui_current_tile, 1, tiledata, bank);
+#ifdef CGB
+    VBK_REG = 0;
+#endif
+}
+inline void ui_load_wram_tile(const UBYTE * tiledata) {
+#ifdef CGB
+    VBK_REG = ui_current_tile_bank;
+#endif
+    set_bkg_data(ui_current_tile, 1, tiledata);
+#ifdef CGB
+    VBK_REG = 0;
+#endif
 }
 
-void UIOnInteract() {
-  UIOnInteract_b();
+inline void ui_next_tile() {
+    ui_prev_tile_bank = ui_current_tile_bank;
+    ui_prev_tile = ui_current_tile++;
+    if (ui_current_tile) return;
+#ifdef CGB
+    if (_is_CGB) {
+        ui_current_tile_bank++;
+        ui_current_tile_bank &= 1;
+        ui_current_tile = (ui_current_tile_bank) ? TEXT_BUFFER_START_BANK1 : TEXT_BUFFER_START;
+    } else {
+        ui_current_tile = TEXT_BUFFER_START;
+    }
+#else
+    ui_current_tile = TEXT_BUFFER_START;
+#endif
 }
 
-UBYTE UIAtDest() {
-  return win_pos_x == win_dest_pos_x && win_pos_y == win_dest_pos_y;
+void ui_print_reset() {
+    if (vwf_current_offset) ui_next_tile();
+    vwf_current_offset = 0;
+    memset(vwf_tile_data, text_bkg_fill, sizeof(vwf_tile_data));
 }
 
-void UISetColor(UBYTE color) {
-  UISetColor_b(color);
+void ui_print_shift_char(void * dest, const void * src, UBYTE bank) OLDCALL;
+UWORD ui_print_make_mask_lr(UBYTE width, UBYTE ofs) OLDCALL;
+UWORD ui_print_make_mask_rl(UBYTE width, UBYTE ofs) OLDCALL;
+void ui_swap_tiles();
+
+UBYTE ui_print_render(const unsigned char ch) {
+    UBYTE letter = (vwf_current_font_desc.attr & FONT_RECODE) ? ReadBankedUBYTE(vwf_current_font_desc.recode_table + (ch & vwf_current_font_desc.mask), vwf_current_font_bank) : ch;
+    const UBYTE * bitmap = vwf_current_font_desc.bitmaps + letter * 16u;
+    if (vwf_current_font_desc.attr & FONT_VWF) {
+        vwf_inverse_map = (vwf_current_font_desc.attr & FONT_VWF_1BIT) ? text_bkg_fill : 0u;
+        UBYTE width = ReadBankedUBYTE(vwf_current_font_desc.widths + letter, vwf_current_font_bank);
+        if (vwf_direction == UI_PRINT_LEFTTORIGHT) {
+            vwf_current_rotate = vwf_current_offset;
+            UWORD masks = ui_print_make_mask_lr(width, vwf_current_offset);
+            vwf_current_mask = (UBYTE)masks;
+            ui_print_shift_char(vwf_tile_data, bitmap, vwf_current_font_bank);
+
+            if ((UBYTE)(vwf_current_offset + width) > 8u) {
+                vwf_current_rotate = (8u - vwf_current_offset) | 0x80u;
+                vwf_current_mask = (UBYTE)(masks >> 8u);
+                ui_print_shift_char(vwf_tile_data + 16u, bitmap, vwf_current_font_bank);
+            }
+        } else {
+            UBYTE dx = (8u - vwf_current_offset);      
+            vwf_current_rotate =  (width < dx) ? (dx - width) : (width - dx) | 0x80u;
+            UWORD masks = ui_print_make_mask_rl(width, vwf_current_offset);
+            vwf_current_mask = (UBYTE)masks;
+            ui_print_shift_char(vwf_tile_data, bitmap, vwf_current_font_bank);
+
+            if ((UBYTE)(vwf_current_offset + width) > 8u) {
+                vwf_current_rotate = 16u - (UBYTE)(vwf_current_offset + width);
+                vwf_current_mask = (UBYTE)(masks >> 8u);
+                ui_print_shift_char(vwf_tile_data + 16u, bitmap, vwf_current_font_bank);
+            }
+        }
+        vwf_current_offset += width;
+
+        ui_load_wram_tile(vwf_tile_data);
+        if (vwf_current_offset > 7u) {
+            ui_swap_tiles();
+            vwf_current_offset -= 8u;
+            ui_next_tile();
+            if (vwf_current_offset) ui_load_wram_tile(vwf_tile_data);
+            return TRUE;
+        } 
+        return FALSE;
+    } else {
+        if (vwf_current_offset) ui_next_tile();
+        ui_load_tile(bitmap, vwf_current_font_bank);
+        ui_next_tile();
+        vwf_current_offset = 0u;
+        return TRUE;
+    }
+}
+
+inline void ui_set_tile(UBYTE * addr, UBYTE tile, UBYTE bank) {
+#ifdef CGB
+    if (_is_CGB) {
+        VBK_REG = 1;        
+        SetTile(addr, (bank) ? ((UI_PALETTE & 0x07u) | 0x08u) : (UI_PALETTE & 0x07u));
+        VBK_REG = 0;
+    }
+#else
+    bank;
+#endif
+    SetTile(addr, tile);
+}
+
+void ui_draw_text_buffer_char() BANKED {
+    static UBYTE current_font_idx, current_text_bkg_fill, current_vwf_direction, current_text_ff_joypad, current_text_draw_speed;
+
+    if ((text_ff_joypad) && (INPUT_A_OR_B_PRESSED)) text_ff = TRUE;
+
+    if ((!text_ff) && (text_wait)) {
+        text_wait--;
+        return;
+    }
+
+    if (ui_text_ptr == 0) {
+        // set the delay mask
+        current_text_speed = ui_time_masks[text_draw_speed];
+        // save font and color global properties
+        current_font_idx        = vwf_current_font_idx;
+        current_text_bkg_fill   = text_bkg_fill;
+        current_vwf_direction   = vwf_direction;
+        current_text_ff_joypad  = text_ff_joypad;
+        current_text_draw_speed = text_draw_speed;
+        // reset to first line
+        // current char pointer
+        ui_text_ptr = ui_text_data;
+        // VRAM destination
+        ui_dest_base = text_render_base_addr + 32 + 1; // gotoxy(1,1)
+        if (vwf_direction == UI_PRINT_RIGHTTOLEFT) ui_dest_base += 17;
+        // with and initial pos correction
+        // initialize current pointer with corrected base value
+        ui_dest_ptr = ui_dest_base;
+        // tileno destination
+        ui_print_reset();
+    }
+
+    // normally runs once, but if control code encountered, then process them until printable symbol or terminator
+    while (TRUE) {
+        switch (*ui_text_ptr) {
+            case 0x00: {
+                ui_text_ptr = 0; 
+                text_drawn = TRUE;
+                if (vwf_current_font_idx != current_font_idx) {
+                    const far_ptr_t * font = ui_fonts + vwf_current_font_idx;
+                    MemcpyBanked(&vwf_current_font_desc, font->ptr, sizeof(font_desc_t), vwf_current_font_bank = font->bank);
+                }
+                text_bkg_fill = current_text_bkg_fill;
+                vwf_direction = current_vwf_direction;
+                text_ff_joypad = current_text_ff_joypad;
+                text_draw_speed = current_text_draw_speed;
+                return;
+            }
+            case 0x01:
+                // set text speed
+                text_draw_speed = (*(++ui_text_ptr) - 1u) & 0x07u;
+                current_text_speed = ui_time_masks[text_draw_speed];
+                break;
+            case 0x02: {
+                // set current font
+                current_font_idx = *(++ui_text_ptr) - 1u;
+                const far_ptr_t * font = ui_fonts + current_font_idx;
+                UBYTE old_flags = vwf_current_font_desc.attr;
+                MemcpyBanked(&vwf_current_font_desc, font->ptr, sizeof(font_desc_t), vwf_current_font_bank = font->bank);
+                if ((vwf_current_offset) && ((old_flags & FONT_VWF) != 0) && ((vwf_current_font_desc.attr & FONT_VWF) == 0)) {
+                    ui_dest_ptr++;
+                }
+                break;
+            }
+            case 0x03:
+                // gotoxy 
+                ui_dest_ptr = ui_dest_base = text_render_base_addr + (*++ui_text_ptr - 1u) + (*++ui_text_ptr - 1u) * 32u;
+                if (vwf_current_offset) ui_print_reset();
+                break;
+            case 0x04: {
+                // relative gotoxy
+                BYTE dx = (BYTE)(*++ui_text_ptr);
+                if (dx > 0) dx--;
+                BYTE dy = (BYTE)(*++ui_text_ptr);
+                if (dy > 0) dy--;
+                ui_dest_base = ui_dest_ptr += dx + dy * 32u;
+                if (vwf_current_offset) ui_print_reset();
+                break;
+            }
+            case 0x06:
+                // wait for input cancels fast forward
+                if (text_ff) {
+                    text_ff = FALSE;
+                    text_ff_joypad = FALSE;
+                    INPUT_RESET;
+                }
+                // if high speed then skip waiting
+                if (text_draw_speed == 0) {
+                    ui_text_ptr++;
+                    break;
+                } 
+                // wait for key press (parameter is a mask)
+                if ((joy & ~last_joy) & *++ui_text_ptr) {
+                    text_ff_joypad = current_text_ff_joypad;
+                    break;
+                }
+                ui_text_ptr--;
+                return;
+            case 0x07:
+                // set text color
+                text_bkg_fill = (*++ui_text_ptr & 1u) ? TEXT_BKG_FILL_W : TEXT_BKG_FILL_B;
+                break;
+            case 0x08:
+                // text direction (left-to-right or right-to-left)
+                vwf_direction = (*++ui_text_ptr & 1u) ? UI_PRINT_LEFTTORIGHT : UI_PRINT_RIGHTTOLEFT;
+                break;
+            case 0x09:
+                break;
+            case '\r':
+                // line feed
+                if ((ui_dest_ptr + 32u) > (UBYTE *)((((UWORD)text_scroll_addr + ((UWORD)text_scroll_height << 5)) & 0xFFE0) - 1)) {
+                    scroll_rect(text_scroll_addr, text_scroll_width, text_scroll_height, text_scroll_fill);
+#ifdef CGB
+                    if (_is_CGB) {
+                        VBK_REG = 1;
+                        scroll_rect(text_scroll_addr, text_scroll_width, text_scroll_height, (UI_PALETTE & 0x07u));
+                        VBK_REG = 0;
+                    }
+#endif
+                    ui_dest_ptr = ui_dest_base;
+                } else {
+                    ui_dest_ptr = ui_dest_base += 32u;
+                }
+                if (vwf_current_offset) ui_print_reset();
+                break;
+            case '\n':
+                // carriage return
+                ui_dest_ptr = ui_dest_base += 32u;
+                if (vwf_current_offset) ui_print_reset();
+                break;
+            case 0x05:
+                // escape symbol
+                ui_text_ptr++; 
+                // fall down to default
+            default:
+                if (ui_print_render(*ui_text_ptr)) {
+                    ui_set_tile(ui_dest_ptr, ui_prev_tile, ui_prev_tile_bank);
+                    if (vwf_direction == UI_PRINT_LEFTTORIGHT)  ui_dest_ptr++; else ui_dest_ptr--;
+                }
+                if (vwf_current_offset) ui_set_tile(ui_dest_ptr, ui_current_tile, ui_current_tile_bank);
+                ui_text_ptr++;
+                return;
+        }
+        ui_text_ptr++;
+    }
+}
+
+void ui_update() NONBANKED {
+    UBYTE is_moving = FALSE;
+
+    // y should always move first
+    if (win_pos_y != win_dest_pos_y) {
+        if ((game_time & ui_time_masks[win_speed]) == 0) {
+            UBYTE interval = (win_speed == 0) ? 2u : 1u;
+            // move window up/down
+            if (win_pos_y < win_dest_pos_y) win_pos_y += interval; else win_pos_y -= interval;
+        }
+        is_moving = TRUE;
+    }
+    if (win_pos_x != win_dest_pos_x) {
+        if ((game_time & ui_time_masks[win_speed]) == 0) {
+            UBYTE interval = (win_speed == 0) ? 2u : 1u;
+            // move window left/right
+            if (win_pos_x < win_dest_pos_x) win_pos_x += interval; else win_pos_x -= interval;
+        }
+        is_moving = TRUE;
+    }
+
+    // don't draw text while moving
+    if (is_moving) return;
+    // all drawn - nothing to do
+    if (text_drawn) return;
+    // too fast - wait
+    if ((!INPUT_A_OR_B_PRESSED) && (game_time & current_text_speed)) return;
+    // render next char
+    do {
+        ui_draw_text_buffer_char();
+    } while (((text_ff) || (text_draw_speed == 0)) && (!text_drawn));
+}
+
+UBYTE ui_run_menu(menu_item_t * start_item, UBYTE bank, UBYTE options, UBYTE count) BANKED {
+    menu_item_t current_menu_item;
+    UBYTE current_index = 1u, next_index = 0u;
+    // copy first menu item
+    MemcpyBanked(&current_menu_item, start_item, sizeof(menu_item_t), bank);
+    // draw menu cursor
+    
+#ifdef CGB
+    if (_is_CGB) {
+        VBK_REG = 1;
+        set_win_tile_xy(current_menu_item.X, current_menu_item.Y, (UI_PALETTE & 0x07u));        
+        VBK_REG = 0;
+    }
+#endif
+    set_win_tile_xy(current_menu_item.X, current_menu_item.Y, ui_cursor_tile);
+    while (TRUE) {
+        input_update();
+        ui_update();
+        
+        toggle_shadow_OAM();
+        camera_update();
+        scroll_update();
+        actors_update();
+        projectiles_render();
+        activate_shadow_OAM();
+
+        game_time++;
+        wait_vbl_done();
+
+        if (INPUT_UP_PRESSED) {
+            next_index = current_menu_item.iU;
+        } else if (INPUT_DOWN_PRESSED) {
+            next_index = current_menu_item.iD;
+        } else if (INPUT_LEFT_PRESSED) {
+            next_index = current_menu_item.iL;
+        } else if (INPUT_RIGHT_PRESSED) {
+            next_index = current_menu_item.iR;
+        } else if (INPUT_A_PRESSED) {
+            return ((current_index == count) && (options & MENU_CANCEL_LAST)) ? 0u : current_index;
+        } else if ((INPUT_B_PRESSED) && (options & MENU_CANCEL_B))  {
+            return 0u;
+        } else {
+            continue;
+        }
+
+        if (!next_index) continue;
+
+        // update current index
+        current_index = next_index;
+        // erase old cursor
+#ifdef CGB
+        if (_is_CGB) {
+            VBK_REG = 1;
+            set_win_tile_xy(current_menu_item.X, current_menu_item.Y, (UI_PALETTE & 0x07u));        
+            VBK_REG = 0;
+        }
+#endif
+        set_win_tile_xy(current_menu_item.X, current_menu_item.Y, ui_bg_tile);
+        // read menu data
+        MemcpyBanked(&current_menu_item, start_item + next_index - 1u, sizeof(menu_item_t), bank);
+        // put new cursor
+#ifdef CGB
+        if (_is_CGB) {
+            VBK_REG = 1;
+            set_win_tile_xy(current_menu_item.X, current_menu_item.Y, (UI_PALETTE & 0x07u));        
+            VBK_REG = 0;
+        }
+#endif
+        set_win_tile_xy(current_menu_item.X, current_menu_item.Y, ui_cursor_tile);
+        // reset next index
+        next_index = 0;
+    };
+}
+
+void ui_run_modal(UBYTE wait_flags) BANKED {
+    UBYTE fail;
+    do {
+        fail = FALSE;
+    
+        if (wait_flags & UI_WAIT_WINDOW)
+            if ((win_pos_x != win_dest_pos_x) || (win_pos_y != win_dest_pos_y)) fail = TRUE;
+        if (wait_flags & UI_WAIT_TEXT)
+            if (!text_drawn) fail = TRUE;
+        if (wait_flags & UI_WAIT_BTN_A)
+            if (!INPUT_A_PRESSED) fail = TRUE;
+        if (wait_flags & UI_WAIT_BTN_B)
+            if (!INPUT_B_PRESSED) fail = TRUE;
+        if (wait_flags & UI_WAIT_BTN_ANY)
+            if (!INPUT_ANY_PRESSED) fail = TRUE;
+
+        if (!fail) return;
+        
+        ui_update();
+
+        toggle_shadow_OAM();
+        camera_update();
+        scroll_update();
+        actors_update();
+        projectiles_render();
+        activate_shadow_OAM();
+
+        game_time++;
+        wait_vbl_done();
+        input_update();
+    } while (fail);    
 }

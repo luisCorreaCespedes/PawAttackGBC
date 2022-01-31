@@ -3,13 +3,12 @@
 
 #include <gb/gb.h>
 
+#include <stdint.h>
+#include <stdbool.h>
+
 #include "asm/types.h"
 
-INT16 DespRight(INT16 a, INT16 b);
-UBYTE Lt16(UINT16 a, UINT16 b);
-UBYTE Gt16(UINT16 a, UINT16 b);
-
-#define IS_NEG(a) ((UBYTE)(a)&0x80)
+#define IS_NEG(a) ((uint8_t)(a)&0x80)
 
 #define U_LESS_THAN(A, B) ((A) - (B)&0x8000u)
 #define UBYTE_LESS_THAN(A, B) ((A) - (B)&0x80u)
@@ -49,23 +48,73 @@ UBYTE Gt16(UINT16 a, UINT16 b);
 #define DIV_4(a) ((a) >> 2)
 #define DIV_2(a) ((a) >> 1)
 
-typedef struct _Pos {
-  WORD x;
-  WORD y;
-} Pos;
+#define SIN(a)  (sine_wave[(uint8_t)(a)])
+#define COS(a)  (sine_wave[(uint8_t)((uint8_t)(a) + 64u)])
 
-typedef struct _Vector2D {
-  BYTE x;
-  BYTE y;
-} Vector2D;
+#define ANGLE_UP        0
+#define ANGLE_RIGHT     64
+#define ANGLE_DOWN      128
+#define ANGLE_LEFT      192
+
+#define ANGLE_0DEG      0
+#define ANGLE_45DEG     32
+#define ANGLE_90DEG     64
+#define ANGLE_135DEG    96
+#define ANGLE_180DEG    128
+#define ANGLE_225DEG    160
+#define ANGLE_270DEG    192
+#define ANGLE_315DEG    224
+
+#define FLIPPED_DIR(dir) MOD_4((dir) + 2)
+#define IS_DIR_HORIZONTAL(dir) ((dir)&01)
+#define IS_DIR_VERTICAL(dir) (!((dir)&01))
+
+#define N_DIRECTIONS    4
+
+typedef struct upoint16_t {
+    uint16_t x, y;
+} upoint16_t;
+
+typedef struct point16_t {
+    int16_t x, y;
+} point16_t;
+
+typedef struct point8_t {
+    int8_t x, y;
+} point8_t;
 
 typedef enum {
-  OPERATOR_EQ = 1,
-  OPERATOR_NE,
-  OPERATOR_LT,
-  OPERATOR_GT,
-  OPERATOR_LTE,
-  OPERATOR_GTE
-} OPERATOR_TYPE;
+    DIR_DOWN = 0,
+    DIR_RIGHT,
+    DIR_UP,
+    DIR_LEFT,
+    DIR_NONE
+} direction_e;
+
+extern const int8_t sine_wave[256];
+extern const point8_t dir_lookup[4];
+extern const uint8_t dir_angle_lookup[4];
+
+inline void point_translate_dir(upoint16_t *point, direction_e dir, uint8_t speed) {
+    point->x += (int16_t)(dir_lookup[dir].x * speed);
+    point->y += (int16_t)(dir_lookup[dir].y * speed);
+}
+
+inline void point_translate_dir_word(upoint16_t *point, direction_e dir, uint16_t speed) {
+    point->x += (int16_t)(dir_lookup[dir].x * speed);
+    point->y += (int16_t)(dir_lookup[dir].y * speed);
+}
+
+inline void point_translate_angle(upoint16_t *point, uint8_t angle, uint8_t speed) {
+    point->x += ((SIN(angle) * (speed)) >> 7);
+    point->y -= ((COS(angle) * (speed)) >> 7);
+}
+
+inline void point_translate_angle_to_delta(point16_t *point, uint8_t angle, uint8_t speed) {
+    point->x = ((SIN(angle) * (speed)) >> 7);
+    point->y = ((COS(angle) * (speed)) >> 7);
+}
+
+uint8_t isqrt(uint16_t x) NONBANKED;
 
 #endif

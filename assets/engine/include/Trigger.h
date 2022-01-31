@@ -2,29 +2,21 @@
 #define TRIGGER_H
 
 #include <gb/gb.h>
-
-#include "BankData.h"
-#include "Math.h"
+#include "gbs_types.h"
+#include "math.h"
 
 #define TRIGGER_BANK 1
 #define MAX_TRIGGERS 31
 #define MAX_ACTIVE_TRIGGERS 11
 #define NO_TRIGGER_COLLISON 0xFF
 
-typedef struct _TRIGGER {
-  UBYTE x;
-  UBYTE y;
-  UBYTE w;
-  UBYTE h;
-  BankPtr events_ptr;
-} Trigger;
-
-extern Trigger triggers[MAX_TRIGGERS];
-extern UBYTE triggers_active[MAX_ACTIVE_TRIGGERS];
-extern UBYTE triggers_active_size;
+extern trigger_t triggers[MAX_TRIGGERS];
 extern UBYTE triggers_len;
-extern UBYTE last_trigger_tx;
-extern UBYTE last_trigger_ty;
+
+/**
+ * Resets trigger collision flags on scene start
+ */
+void trigger_reset() BANKED;
 
 /**
  * Find trigger at tile {tx,ty}
@@ -33,14 +25,14 @@ extern UBYTE last_trigger_ty;
  * @param ty Top tile
  * @return tile index or NO_TRIGGER_COLLISON if not found
  */
-UBYTE TriggerAtTile(UBYTE tx_a, UBYTE ty_a);
+UBYTE trigger_at_tile(UBYTE tx_a, UBYTE ty_a) BANKED;
 
 /**
  * Run script for trigger specified trigger
  *
  * @param i Trigger index
  */
-void TriggerRunScript(UBYTE i);
+void trigger_interact(UBYTE i) BANKED;
 
 /**
  * Run script for trigger at tile {tx,ty} if this tile was the
@@ -51,6 +43,9 @@ void TriggerRunScript(UBYTE i);
  * @param ty Top tile
  * @param force Force trigger to activate without changing tile
  */
-UBYTE ActivateTriggerAt(UBYTE tx, UBYTE ty, UBYTE force);
+UBYTE trigger_activate_at(UBYTE tx, UBYTE ty, UBYTE force) BANKED;
+
+UBYTE trigger_activate_at_intersection(bounding_box_t *bb, upoint16_t *offset, UBYTE force) BANKED;
+UBYTE trigger_at_intersection(bounding_box_t *bb, upoint16_t *offset) BANKED;
 
 #endif

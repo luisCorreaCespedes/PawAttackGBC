@@ -1,168 +1,157 @@
-#pragma bank 5
+#pragma bank 3
 
-#include "states/TopDown.h"
-#include "Actor.h"
-#include "Camera.h"
-#include "Collision.h"
-#include "DataManager.h"
-#include "GameTime.h"
-#include "Input.h"
-#include "Trigger.h"
-#include "data_ptrs.h"
+#include "data/states_defines.h"
+#include "states/topdown.h"
 
-void Start_TopDown() {
-  camera_offset.x = 0;
-  camera_offset.y = 0;
-  camera_deadzone.x = 0;
-  camera_deadzone.y = 0;
+#include "actor.h"
+#include "camera.h"
+#include "collision.h"
+#include "data_manager.h"
+#include "game_time.h"
+#include "input.h"
+#include "trigger.h"
+#include "math.h"
+#include "vm.h"
 
-  if (topdown_grid == 16) {
-    // Snap to 16px grid
-    player.pos.x = MUL_16(DIV_16(player.pos.x));
-    player.pos.y = 8 + MUL_16(DIV_16(player.pos.y));
-  }
+#ifndef INPUT_TOPDOWN_INTERACT
+#define INPUT_TOPDOWN_INTERACT INPUT_A
+#endif
+
+UBYTE topdown_grid;
+
+void topdown_init() BANKED {
+    camera_offset_x = 0;
+    camera_offset_y = 0;
+    camera_deadzone_x = 0;
+    camera_deadzone_y = 0;
+
+    if (topdown_grid == 16) {
+        // Snap to 16px grid
+        PLAYER.pos.x = ((PLAYER.pos.x >> 8) << 8);
+        PLAYER.pos.y = ((PLAYER.pos.y >> 8) << 8) + 128;
+    } else {
+        PLAYER.pos.x = ((PLAYER.pos.x >> 7) << 7);
+        PLAYER.pos.y = ((PLAYER.pos.y >> 7) << 7);
+    }
 }
 
-void Update_TopDown() {
-  UBYTE tile_x, tile_y, hit_actor;
+void topdown_update() BANKED {
+    actor_t *hit_actor;
+    UBYTE tile_start, tile_end;
+    direction_e new_dir = DIR_NONE;
 
-  tile_x = DIV_8(player.pos.x);
-  tile_y = DIV_8(player.pos.y);
+    // Is player on an 8x8px tile?
+    if ((topdown_grid == 16 && ON_16PX_GRID(PLAYER.pos)) ||
+        (topdown_grid == 8 && ON_8PX_GRID(PLAYER.pos))) {
+        // Player landed on an tile
+        // so stop movement for now
+        player_moving = FALSE;
 
-  // Is player on an 8x8px tile?
-  if ((topdown_grid == 16 && (MOD_16(player.pos.x) == 0 && MOD_16(player.pos.y) == 8)) ||
-      (topdown_grid ==  8 && (MOD_8(player.pos.x)  == 0 && MOD_8(player.pos.y)  == 0))) {
-    // Player landed on an tile
-    // so stop movement for now
-    player.moving = FALSE;
+        // Check for trigger collisions
+        if (trigger_activate_at_intersection(&PLAYER.bounds, &PLAYER.pos, FALSE)) {
+            // Landed on a trigger
+            return;
+        }
+        
+        // Check input to set player movement
+        if (INPUT_RECENT_LEFT) {
+            player_moving = TRUE;
+            new_dir = DIR_LEFT;
 
-    // Check for trigger collisions
-    if (ActivateTriggerAt(tile_x, tile_y, FALSE)) {
-      // If landed on a trigger don't update movement this frame
-      return;
+            // Check for collisions to left of player
+            tile_start = (((PLAYER.pos.y >> 4) + PLAYER.bounds.top)    >> 3);
+            tile_end   = (((PLAYER.pos.y >> 4) + PLAYER.bounds.bottom) >> 3) + 1;
+            UBYTE tile_x = ((PLAYER.pos.x >> 4) + PLAYER.bounds.left) >> 3;
+            while (tile_start != tile_end) {
+                if (tile_at(tile_x - 1, tile_start) & COLLISION_RIGHT) {
+                    player_moving = FALSE;
+                    break;
+                }
+                tile_start++;
+            }
+        } else if (INPUT_RECENT_RIGHT) {
+            player_moving = TRUE;
+            new_dir = DIR_RIGHT;
+
+            // Check for collisions to right of player
+            tile_start = (((PLAYER.pos.y >> 4) + PLAYER.bounds.top)    >> 3);
+            tile_end   = (((PLAYER.pos.y >> 4) + PLAYER.bounds.bottom) >> 3) + 1;
+            UBYTE tile_x = ((PLAYER.pos.x >> 4) + PLAYER.bounds.right) >> 3;
+            while (tile_start != tile_end) {
+                if (tile_at(tile_x + 1, tile_start) & COLLISION_LEFT) {
+                    player_moving = FALSE;
+                    break;
+                }
+                tile_start++;
+            }
+        } else if (INPUT_RECENT_UP) {
+            player_moving = TRUE;
+            new_dir = DIR_UP;
+
+            // Check for collisions below player
+            tile_start = (((PLAYER.pos.x >> 4) + PLAYER.bounds.left)  >> 3);
+            tile_end   = (((PLAYER.pos.x >> 4) + PLAYER.bounds.right) >> 3) + 1;
+            UBYTE tile_y = ((PLAYER.pos.y >> 4) + PLAYER.bounds.top) >> 3;
+            while (tile_start != tile_end) {
+                if (tile_at(tile_start, tile_y - 1) & COLLISION_BOTTOM) {
+                    player_moving = FALSE;
+                    break;
+                }
+                tile_start++;
+            }
+        } else if (INPUT_RECENT_DOWN) {
+            player_moving = TRUE;
+            new_dir = DIR_DOWN;
+
+            // Check for collisions below player
+            tile_start = (((PLAYER.pos.x >> 4) + PLAYER.bounds.left)  >> 3);
+            tile_end   = (((PLAYER.pos.x >> 4) + PLAYER.bounds.right) >> 3) + 1;
+            UBYTE tile_y = ((PLAYER.pos.y >> 4) + PLAYER.bounds.bottom) >> 3;
+            while (tile_start != tile_end) {
+                if (tile_at(tile_start, tile_y + 1) & COLLISION_TOP) {
+                    player_moving = FALSE;
+                    break;
+                }
+                tile_start++;
+            }
+        }
+
+        // Update direction animation
+        if (new_dir != DIR_NONE) {
+            actor_set_dir(&PLAYER, new_dir, player_moving);
+        } else {
+            actor_set_anim_idle(&PLAYER);
+        }
+
+        if (IS_FRAME_ODD) {
+            // Check for actor overlap
+            hit_actor = actor_overlapping_player(FALSE);
+            if (hit_actor != NULL && hit_actor->collision_group) {
+                player_register_collision_with(hit_actor);
+            }
+        }
+
+        // Check if walked in to actor
+        if (player_moving) {
+            hit_actor = actor_in_front_of_player(topdown_grid, FALSE);
+            if (hit_actor != NULL) {
+                player_register_collision_with(hit_actor);
+                actor_stop_anim(&PLAYER);
+                player_moving = FALSE;
+            }
+        }
+
+        if (INPUT_PRESSED(INPUT_TOPDOWN_INTERACT)) {
+            hit_actor = actor_in_front_of_player(topdown_grid, TRUE);
+            if (hit_actor != NULL && !hit_actor->collision_group) {
+                actor_set_dir(hit_actor, FLIPPED_DIR(PLAYER.dir), FALSE);
+                player_moving = FALSE;
+                if (hit_actor->script.bank) {
+                    script_execute(hit_actor->script.bank, hit_actor->script.ptr, 0, 1, 0);
+                }
+            }
+        }
     }
 
-    // Check input to set player movement
-    if (INPUT_RECENT_LEFT) {
-      player.dir.x = -1;
-      player.dir.y = 0;
-      player.rerender = TRUE;
-
-      // Check for collisions to left of player
-      if (topdown_grid == 16) {
-        UBYTE tile_left = tile_x - 2;
-        if (tile_x != 0 && !(TileAt2x2(tile_left, tile_y-1) & COLLISION_RIGHT)) {
-          player.moving = TRUE;
-        }
-      } else {
-        UBYTE tile_left = tile_x - 1;
-        if (tile_x != 0 && !(TileAt2x1(tile_left, tile_y) & COLLISION_RIGHT)) {
-          player.moving = TRUE;
-        }
-      }
-
-    } else if (INPUT_RECENT_RIGHT) {
-      player.dir.x = 1;
-      player.dir.y = 0;
-      player.rerender = TRUE;
-
-      // Check for collisions to right of player
-      if (topdown_grid == 16) {
-        UBYTE tile_right = tile_x + 2;
-        if (tile_x != image_tile_width - 2 && !(TileAt2x2(tile_right, tile_y-1) & COLLISION_LEFT)) {
-          player.moving = TRUE;
-        }
-      } else {    
-        UBYTE tile_right = tile_x + 1;
-        if (tile_x != image_tile_width - 2 && !(TileAt2x1(tile_right, tile_y) & COLLISION_LEFT)) {
-          player.moving = TRUE;
-        }
-      }
-
-    } else if (INPUT_RECENT_UP) {
-
-      player.dir.x = 0;
-      player.dir.y = -1;
-      player.rerender = TRUE;
-
-      // Check for collisions above player
-      if (topdown_grid == 16) {
-        UBYTE tile_up = tile_y - 3;
-        if (tile_y != 0 && !(TileAt2x2(tile_x, tile_up) & COLLISION_BOTTOM)) {
-          player.moving = TRUE;
-        }        
-      } else {
-        UBYTE tile_up = tile_y - 1;
-        if (tile_y != 0 && !(TileAt2x1(tile_x, tile_up) & COLLISION_BOTTOM)) {
-          player.moving = TRUE;
-        }
-      }
-
-    } else if (INPUT_RECENT_DOWN) {
-      player.dir.x = 0;
-      player.dir.y = 1;
-      player.rerender = TRUE;
-
-      // Check for collisions below player
-      if (topdown_grid == 16) {
-        UBYTE tile_down = tile_y + 1;
-        if (tile_y != image_tile_height - 1 && !(TileAt2x2(tile_x, tile_down) & COLLISION_TOP)) {
-          player.moving = TRUE;
-        }
-      } else {
-        UBYTE tile_down = tile_y + 1;
-        if (tile_y != image_tile_height - 1 && !(TileAt2x1(tile_x, tile_down) & COLLISION_TOP)) {
-          player.moving = TRUE;
-        }
-      }
-    }
-
-    hit_actor = ActorOverlapsPlayer(FALSE);
-    if (hit_actor && hit_actor != NO_ACTOR_COLLISON) {
-      if (actors[hit_actor].collision_group) {
-        player.hit_actor = 0;
-        player.hit_actor = hit_actor;
-      }
-    }
-
-    // Check if walked in to actor
-    if (player.moving) {
-      hit_actor = ActorInFrontOfPlayer(topdown_grid, FALSE);
-      if (hit_actor != NO_ACTOR_COLLISON) {
-        player.hit_actor = hit_actor;
-        player.moving = FALSE;
-      }
-    }
-
-    if (INPUT_A_PRESSED) {
-      hit_actor = ActorInFrontOfPlayer(topdown_grid, TRUE);
-      if (hit_actor != NO_ACTOR_COLLISON && !actors[hit_actor].collision_group) {
-        // Turn actor to face player
-        actors[hit_actor].dir.x = -player.dir.x;
-        actors[hit_actor].dir.y = -player.dir.y;
-        actors[hit_actor].rerender = TRUE;
-
-        // Stop player from moving
-        player.moving = FALSE;
-
-        // Run actors interact script
-        ActorRunScript(hit_actor);
-      }
-    }
-  }
-
-  // Move player
-  if (player.moving) {
-    // Move actor
-    if (player.move_speed == 0) {
-      // Half speed only move every other frame
-      if (IS_FRAME_2) {
-        player.pos.x += (WORD)player.dir.x;
-        player.pos.y += (WORD)player.dir.y;
-      }
-    } else {
-      player.pos.x += (WORD)(player.dir.x * player.move_speed);
-      player.pos.y += (WORD)(player.dir.y * player.move_speed);
-    }
-  }
+    if (player_moving) point_translate_dir(&PLAYER.pos, PLAYER.dir, PLAYER.move_speed);
 }

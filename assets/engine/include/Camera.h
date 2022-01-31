@@ -3,29 +3,26 @@
 
 #include <gb/gb.h>
 
-#include "Math.h"
-
-#define CAMERA_BANK 1
-
 #define SCREEN_WIDTH 160
 #define SCREEN_HEIGHT 144
 #define SCREEN_WIDTH_HALF 80
 #define SCREEN_HEIGHT_HALF 72
 
-#define CAMERA_LOCK_FLAG 0x10
-#define CAMERA_TRANSITION_FLAG 0x20
-#define CAMERA_SPEED_MASK 0xF
+#define CAMERA_LOCK_FLAG 0x03
+#define CAMERA_LOCK_X_FLAG 0x01
+#define CAMERA_LOCK_Y_FLAG 0x02
+#define CAMERA_UNLOCKED 0x00
 
-extern Pos camera_pos;
-extern Pos camera_dest;
-extern Vector2D camera_offset;
-extern Vector2D camera_deadzone;
+extern INT16 camera_x;
+extern INT16 camera_y;
+extern BYTE camera_offset_x;
+extern BYTE camera_offset_y;
+extern BYTE camera_deadzone_x;
+extern BYTE camera_deadzone_y;
 extern UBYTE camera_settings;
-extern UBYTE camera_speed;
 
-/**
- * Update camera position based on scroll target and deadzone settings
- */
-void UpdateCamera();
+void camera_init() BANKED;
+void camera_reset() BANKED;
+void camera_update() NONBANKED;
 
 #endif

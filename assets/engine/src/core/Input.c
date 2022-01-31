@@ -1,47 +1,31 @@
-#include "Input.h"
+#pragma bank 4
 
-#include "ScriptRunner.h"
+#include <string.h>
+#include "input.h"
 
-UBYTE joy = 0;
-UBYTE last_joy = 0;
-UBYTE recent_joy = 0;
-UBYTE await_input = 0;
-UBYTE input_wait = 0;
-BankPtr input_script_ptrs[NUM_INPUTS];
-UBYTE input_script_persist = 0;
-UBYTE input_override_default = 0;
+joypads_t joypads;
+UBYTE frame_joy;
+UBYTE last_joy;
+UBYTE recent_joy;
 
-void HandleInputScripts() {
-  UBYTE input_index, input_joy;
-
-  if (input_wait != 0) {
-    input_wait--;
-    return;
-  }
-
-  if (!script_ctxs[0].script_ptr_bank && joy != 0 && joy != last_joy) {
-    input_index = 0;
-    input_joy = joy;
-    for (input_index = 0; input_index != 8; ++input_index) {
-      if (input_joy & 1) {
-        if (input_script_ptrs[input_index].bank) {
-          last_joy = joy;
-          input_wait = 10;
-          ScriptStartBg(&input_script_ptrs[input_index], 255);
-          return;
-        }
-      }
-      input_joy = input_joy >> 1;
-    }
-  }
+void input_init() BANKED {
+    memset(&joypads, 0, sizeof(joypads));
+    last_joy = 0;
+    frame_joy = 0;
+    recent_joy = 0;
+#ifdef SGB
+    joypad_init(MAX_JOYPADS, &joypads);
+#endif
 }
 
-void RemoveInputScripts() {
-  UBYTE i;
-  for (i = 0; i != 8; ++i) {
-    if (!GET_BIT(input_script_persist, i)) {
-      input_script_ptrs[i].bank = 0;
-      UNSET_BIT(input_override_default, i);
-    }
-  }
+void input_update() NONBANKED {
+    last_joy = frame_joy;
+#ifdef SGB
+    joypad_ex(&joypads);
+    frame_joy = joy;
+#else 
+    joy = frame_joy = joypad();
+#endif
+    if ((joy & INPUT_DPAD) != (last_joy & INPUT_DPAD))
+        recent_joy = joy & ~last_joy;
 }
